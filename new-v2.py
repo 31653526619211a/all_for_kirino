@@ -94,9 +94,8 @@ def get_metadata_and_save(api_url, input_json_path):
 
     print("所有请求完成，响应保存到数据库中")
 
-# 调用函数以获取元数据并保存到数据库
-get_metadata_and_save(api_url, input_json_path)
-ef login(driver, username, password):
+
+def login(driver, username, password):
     """Login to the website."""
     driver.get("https://e-hentai.org/bounce_login.php")
 
