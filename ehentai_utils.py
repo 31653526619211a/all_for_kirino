@@ -8,20 +8,86 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from tqdm import tqdm
+import sqlite3
 
+class EhentaiDatabase:
+    def __init__(self, db_path='metadata.db'):
+        self.db_path = db_path
+
+    def __enter__(self):
+        self.conn = sqlite3.connect(self.db_path)
+        self.cursor = self.conn.cursor()
+        return self.cursor
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.conn.commit()
+        self.conn.close()
+
+def create_ehentai_database():
+    """Create E-Hentai database and tables."""
+    try:
+        with EhentaiDatabase() as cursor:
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS download_info (
+                id INTEGER PRIMARY KEY,
+                gid INTEGER,
+                token TEXT,
+                gallery_url TEXT,
+                archive_download TEXT,
+                target_page_url TEXT,
+                processed_url TEXT
+            )
+            """)
+    except sqlite3.Error as e:
+        print(f"SQLite error: {e}")
+
+    finally:
+        # 关闭SQLite连接
+        conn.close()
+
+# 创建SQLite数据库连接
+conn = sqlite3.connect('metadata.db')
+
+# 创建游标对象以执行SQL查询
+cursor = conn.cursor()
 
 MAX_RETRIES = 50
 WAIT_TIME_SECONDS = 10
 
+# 执行一次以在数据库中创建download_info表
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS download_info (
+    id INTEGER PRIMARY KEY,
+    gid INTEGER,
+    token TEXT,
+    gallery_url TEXT,
+    archive_download TEXT,
+    target_page_url TEXT,
+    processed_url TEXT
+)
+""")
+
+    # 关闭SQLite连接
+conn.close()
 def load_galleries_from_json(file_path):
     """Load gallery information from JSON file."""
     with open(file_path, "r", encoding="utf-8", errors="ignore") as file:
         return json.load(file)
 
-def save_to_json(data, filename):
-    """Save data to a JSON file."""
-    with open(filename, 'w', encoding='utf-8', errors="ignore") as file:
-        json.dump(data, file, ensure_ascii=False, indent=2)
+def save_to_database(data):
+    """将数据保存到SQLite数据库中。"""
+    for item in data['gmetadata']:
+        gid = item['gid']
+        token = item['token']
+        archiver_key = item.get('archiver_key', '')  # 如果需要，替换为您的archiver_key
+        archive_download = f'https://e-hentai.org/archiver.php?gid={gid}&token={token}&or={archiver_key}'
+
+        # 将数据插入数据库
+        cursor.execute("INSERT INTO download_info (gid, token, gallery_url, archive_download, target_page_url, processed_url) VALUES (?, ?, ?, ?, ?, ?)",
+                       (gid, token, f'https://e-hentai/g/{gid}/{token}', archive_download, '', ''))
+    
+    # 将更改提交到数据库
+    conn.commit()
 
 def add_archive_download(metadata):
     """Add 'archive_download' key to each metadata item."""
@@ -40,7 +106,6 @@ def send_api_request(api_url, data):
     except requests.RequestException as e:
         print(f"API request failed: {e}")
         return None
-
 def get_metadata(api_url, gidlist):
     """Get metadata from API for given gidlist."""
     all_responses = []
@@ -67,22 +132,20 @@ def get_metadata(api_url, gidlist):
     return all_responses
 
 def get_metadata_and_save(api_url, input_json_path, output_json_path):
-    """Get metadata from API, add 'archive_download' key, and save to a JSON file."""
+    """从API获取元数据并保存到SQLite数据库中。"""
     galleries = load_galleries_from_json(input_json_path)
 
-    # Prepare gidlist for API requests
+    # 准备用于API请求的gidlist
     gidlist = [[gallery["gid"], gallery["token"]] for gallery in galleries]
 
-    # Get metadata
+    # 获取元数据
     all_metadata = get_metadata(api_url, gidlist)
 
-    # Save metadata to a new JSON file
-    save_to_json({"gmetadata": all_metadata}, output_json_path)
+    # 将元数据保存到SQLite数据库
+    save_to_database({"gmetadata": all_metadata})
 
-    print(f"All requests completed, responses saved to {output_json_path}")
-
-    return output_json_path  # Return the path of the new JSON file
-
+    print("所有请求完成，响应保存到数据库中")
+       
 def login(driver, username, password):
     """Login to the website."""
     driver.get("https://e-hentai.org/bounce_login.php")
@@ -100,20 +163,8 @@ def login(driver, username, password):
 
     time.sleep(10)
 
-def process_target_pages(driver, json_file_path, output_file_path):
-    """Process target pages from a JSON file."""
-    with open(json_file_path, "r", errors="ignore") as json_file:
-        data = json.load(json_file)
-
-    total_entries = sum(1 for entry in data['gmetadata'] if 'archive_download' in entry)
-
-    for entry in tqdm(data['gmetadata'], total=total_entries, desc="Processing Pages"):
-        if 'archive_download' in entry:
-            target_page = entry['archive_download']
-            process_single_target_page(driver, target_page, output_file_path)
-
 def process_single_target_page(driver, target_page, output_file_path):
-    """Process a single target page."""
+    """处理单个目标页面。"""
     driver.get(target_page)
 
     for _ in range(MAX_RETRIES):
@@ -128,15 +179,30 @@ def process_single_target_page(driver, target_page, output_file_path):
 
             current_url = driver.current_url
 
-            print(f"URL after clicking Download Original Archive button for {target_page}:", current_url)
+            print(f"点击 {target_page} 的 Download Original Archive 按钮后的URL：", current_url)
 
-            with open(output_file_path, "a", errors="ignore") as file:
-                file.write(f"{target_page}: {current_url}\n")
+            # 在 process_single_target_page 函数中
+            # 将下载信息插入 download_info 表
+            cursor.execute("UPDATE download_info SET target_page_url = ?, processed_url = ? WHERE archive_download = ?",
+                           (current_url, f"{current_url}?star=1", target_page))
+            conn.commit()
 
             break
         except Exception as e:
-            print(f"An error occurred: {e}")
-            print(f"Retrying... ({MAX_RETRIES} attempts)")
+            print(f"发生错误：{e}")
+            print(f"重试... ({MAX_RETRIES} 次)")
+
+def process_target_pages(driver, json_file_path, output_file_path):
+    """Process target pages from a JSON file."""
+    with open(json_file_path, "r", errors="ignore") as json_file:
+        data = json.load(json_file)
+
+    total_entries = sum(1 for entry in data['gmetadata'] if 'archive_download' in entry)
+
+    for entry in tqdm(data['gmetadata'], total=total_entries, desc="Processing Pages"):
+        if 'archive_download' in entry:
+            target_page = entry['archive_download']
+            process_single_target_page(driver, target_page, output_file_path)
 
 def get_download_urls(username, password, json_file_path, output_file_path):
     """Main function to get download URLs."""
@@ -150,18 +216,4 @@ def get_download_urls(username, password, json_file_path, output_file_path):
         print(f"An error occurred: {e}")
 
     finally:
-        driver.quit()
-
-# 使用示例
-api_url = "https://api.e-hentai.org/api.php"
-input_json_path = "main.json"
-output_json_path = "all_metadata.json"
-
-get_metadata_and_save(api_url, input_json_path, output_json_path)
-
-get_download_urls("username", "password", "all_metadata.json", "dl_url.txt")
-
-
-#MAX_RETRIES = 50表示最大重试次数
-
-#WAIT_TIME_SECONDS = 10表示每次重试之间的等待时间
+        driver.quit()    
