@@ -140,10 +140,12 @@ def process_single_target_page(driver, target_page):
 
             print(f"点击 {target_page} 的 Download Original Archive 按钮后的URL：", current_url)
 
-            # 将下载URL插入数据库
-            cursor.execute("INSERT INTO download_urls (archive_download, download_url, processed_url) VALUES (?, ?, ?)",
-               (target_page, current_url, f"{current_url}?star=1"))
+            # 在 process_single_target_page 函数中
+            # 将下载信息插入 download_info 表
+            cursor.execute("INSERT INTO download_info (gid, token, gallery_url, archive_download, target_page_url, processed_url) VALUES (?, ?, ?, ?, ?, ?)",
+                           (gid, token, f'https://e-hentai/g/{gid}/{token}', archive_download, target_page, f"{current_url}?star=1"))
             conn.commit()
+
 
             break
         except Exception as e:
