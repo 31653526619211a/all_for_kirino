@@ -141,7 +141,8 @@ def process_single_target_page(driver, target_page):
             print(f"点击 {target_page} 的 Download Original Archive 按钮后的URL：", current_url)
 
             # 将下载URL插入数据库
-            cursor.execute("INSERT INTO download_urls (archive_download, download_url) VALUES (?, ?)", (target_page, current_url))
+            cursor.execute("INSERT INTO download_urls (archive_download, download_url, processed_url) VALUES (?, ?, ?)",
+               (target_page, current_url, f"{current_url}?star=1"))
             conn.commit()
 
             break
